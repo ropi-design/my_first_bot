@@ -16,6 +16,7 @@ from linebot.models import (
     CarouselColumn,
     MessageAction,
     URIAction,
+    LocationAction,
 )
 from dotenv import load_dotenv
 
@@ -206,11 +207,90 @@ def handle_text_message(event):
             template=ButtonsTemplate(
                 title="日付が選択されました",
                 text=f"選択された日付: {selected_date}\n次に位置情報を送信してください。",
-                actions=[MessageAction(label="位置情報を送信", text="位置情報を送信します")],
+                actions=[
+                    LocationAction(label="位置情報を送信"),
+                    MessageAction(label="手動で位置情報入力", text="位置情報を手動入力")
+                ],
             ),
         )
         line_bot_api.reply_message(event.reply_token, reply_message)
+    elif text == "位置情報を手動入力":
+        # 手動位置情報入力の説明
+        reply_message = TextSendMessage(
+            text="位置情報を手動で入力するには、以下のいずれかの方法をお試しください：\n\n"
+                 "1️⃣ 位置情報送信ボタンをタップ\n"
+                 "2️⃣ LINEアプリで位置情報を送信\n"
+                 "3️⃣ 住所を入力（例：東京駅、渋谷駅）\n\n"
+                 "住所を入力する場合は、そのまま入力してください。"
+        )
+        line_bot_api.reply_message(event.reply_token, reply_message)
+    elif text.startswith("位置情報を送信します"):
+        # 位置情報送信の説明
+        reply_message = TextSendMessage(
+            text="位置情報を送信するには、以下のいずれかの方法をお試しください：\n\n"
+                 "1️⃣ 位置情報送信ボタンをタップ\n"
+                 "2️⃣ LINEアプリで位置情報を送信\n"
+                 "3️⃣ 住所を入力（例：東京駅、渋谷駅）\n\n"
+                 "住所を入力する場合は、そのまま入力してください。"
+        )
+        line_bot_api.reply_message(event.reply_token, reply_message)
     else:
+        # 住所入力による位置情報取得を試行
+        if event.source.user_id in user_sessions:
+            # 日付が選択されている場合、住所を位置情報として処理
+            try:
+                # 簡単な住所→座標変換（実際の実装では外部APIを使用）
+                if "東京" in text or "tokyo" in text.lower():
+                    latitude, longitude = 35.6762, 139.6503
+                elif "大阪" in text or "osaka" in text.lower():
+                    latitude, longitude = 34.6937, 135.5023
+                elif "名古屋" in text or "nagoya" in text.lower():
+                    latitude, longitude = 35.1815, 136.9066
+                elif "福岡" in text or "fukuoka" in text.lower():
+                    latitude, longitude = 33.5902, 130.4017
+                elif "札幌" in text or "sapporo" in text.lower():
+                    latitude, longitude = 43.0618, 141.3545
+                else:
+                    # 住所が認識できない場合はオウム返し
+                    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=text))
+                    return
+                
+                # スクレイピング実行
+                selected_date = user_sessions[event.source.user_id]
+                events = scrape_walkerplus(latitude, longitude, selected_date)
+                
+                if events:
+                    # イベントが見つかった場合、カルーセルメッセージを作成
+                    carousel_columns = []
+                    for event in events:
+                        column = CarouselColumn(
+                            title=event["title"][:40],  # タイトルは40文字まで
+                            text=f"日付: {selected_date}",
+                            actions=[URIAction(label="詳細を見る", uri=event["link_url"])],
+                        )
+                        carousel_columns.append(column)
+                    
+                    reply_message = TemplateSendMessage(
+                        alt_text=f"{len(events)}件のイベントが見つかりました",
+                        template=CarouselTemplate(columns=carousel_columns),
+                    )
+                else:
+                    # イベントが見つからなかった場合
+                    reply_message = TextSendMessage(
+                        text=f"{selected_date}の{text}周辺でイベントが見つかりませんでした。\n別の日付や場所をお試しください。"
+                    )
+                
+                # セッションをクリア
+                del user_sessions[event.source.user_id]
+                
+                line_bot_api.reply_message(event.reply_token, reply_message)
+                return
+                
+            except Exception as e:
+                print(f"住所処理エラー: {e}")
+                # エラーが発生した場合はオウム返し
+                pass
+        
         # オウム返し
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=text))
 
